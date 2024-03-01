@@ -4,8 +4,8 @@ from torchvision import datasets, transforms
 
 data_path_str = "./data"
 ETA = "\N{GREEK SMALL LETTER ETA}"
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cpu")
 torch.backends.cudnn.deterministic=True
 
 transform = transforms.Compose([
@@ -136,6 +136,9 @@ from abc import ABC, abstractmethod
 
 class Client(ABC):
     def __init__(self, client_data: Subset, batch_size: int) -> None:
+        if batch_size == -1:
+            batch_size = len(client_data)
+        
         self.model = MnistCnn().to(device)
         self.generator = torch.Generator()
         self.loader_train = DataLoader(
@@ -224,8 +227,8 @@ class DecentralizedServer(Server):
 # ---
 
 class GradientClient(Client):
-    def __init__(self, client_data: Subset) -> None:
-        super().__init__(client_data, len(client_data))
+    def __init__(self, client_data: Subset, batch_size: int) -> None:
+        super().__init__(client_data, batch_size)
 
     def update(self, weights: list[torch.Tensor], seed: int) -> list[torch.Tensor]:
         with torch.no_grad():
@@ -252,15 +255,17 @@ class GradientClient(Client):
 
 class FedSgdGradientServer(DecentralizedServer):
     def __init__(
-            self, lr: float,
-            client_subsets: list[Subset], client_fraction: float, seed: int) -> None:
-        super().__init__(lr, -1, client_subsets, client_fraction, seed)
+            self, lr: float, batch_size: int, client_subsets: list[Subset],
+            client_fraction: float, nr_local_epochs: int, seed: int) -> None:
+        super().__init__(lr, batch_size, client_subsets, client_fraction, seed)
+        self.name = "FedSGDGradient"
+        self.nr_local_epochs = nr_local_epochs
         self.optimizer = SGD(params=self.model.parameters(), lr=lr)
-        self.clients = [GradientClient(subset) for subset in client_subsets]
+        self.clients = [GradientClient(subset, batch_size) for subset in client_subsets]
 
     def run(self, nr_rounds: int) -> RunResult:
         elapsed_time = 0.
-        run_result = RunResult("FedSGDGradient", self.nr_clients, self.client_fraction, -1, 1, self.lr, self.seed)
+        run_result = RunResult(self.name, self.nr_clients, self.client_fraction, self.batch_size, self.nr_local_epochs, self.lr, self.seed)
 
         for nr_round in tqdm(range(nr_rounds), desc="Rounds", leave=False):
             setup_start_time = perf_counter()
